@@ -7,7 +7,7 @@ namespace BashSharp.Interfaces;
 /// </summary>
 public interface ICommandResult
 {
-    void Parse(string result);
+    void SetExitCode(int exitCode);
+    void ParseResult(string result);
     void ParseError(string errorResult);
-    void ParseException(Exception exception);
 }

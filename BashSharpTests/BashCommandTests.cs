@@ -50,52 +50,51 @@ public class BashCommandTests
         }
     }
     
-    // [Fact]
-    // public async Task TestCommandReturnsBoolAsync()
-    // {
-    //     string cmd = "echo Hello World";
-    //     bool result = await BashCommandService.ExecuteCommandAsync(cmd);
-    //
-    //     Assert.True(result, "The async command execution should be successful");
-    // }
+    [Fact]
+    public async Task TestCommandReturnsBool()
+    {
+        string cmd = "echo Hello World";
+        bool result = await BashCommandService.ExecuteCommand(cmd);
     
-    // [Fact]
-    // public async Task TestCommandReturnsCodeAsync()
-    // {
-    //     string cmd = "exit 1";
-    //     Task<bool> task = BashCommandService.ExecuteCommandAsync(cmd);
-    //
-    //     await Assert.ThrowsAsync<Exception>(() => task);
-    // }
+        Assert.True(result, "The async command execution should be successful");
+    }
+    
+    [Fact]
+    public async Task TestCommandReturnsCodeFails()
+    {
+        string cmd = "exit 1";
+        int task = await BashCommandService.ExecuteCommandWithCode(cmd);
+        Assert.Equal(1, task);
+    }
     
     [Fact]
     public async Task TestCommandReturnsResultsAsync()
     {
         string cmd = "echo \"Hello World\"";
-        var result = await BashCommandService.ExecuteCommandWithResultsAsync<TestCommandResult>(cmd);
+        var result = await BashCommandService.ExecuteCommandWithResults<TestCommandResult>(cmd);
 
         Assert.NotNull(result);
         Assert.Equal("Hello World", result.ParsedOutput);
     }
 }
 
-// TestCommandResult class implementing ICommandResult
 public class TestCommandResult : ICommandResult
 {
     public string? ParsedOutput { get; private set; }
+    public int ExitCode { get; set; }
 
-    public void Parse(string output)
+    public void SetExitCode(int exitCode)
+    {
+        ExitCode = exitCode;
+    }
+    
+    public void ParseResult(string output)
     {
         ParsedOutput = output.Trim();
     }
 
     public void ParseError(string error)
     {
-        // Ignore error for this example.
-    }
-
-    public void ParseException(Exception exception)
-    {
-        // Ignore exception for this example.
+        
     }
 }

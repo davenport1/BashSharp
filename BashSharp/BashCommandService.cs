@@ -1,7 +1,6 @@
 ﻿using BashSharp.Interfaces;
 using BashSharp.Enumerations;
 using System.Diagnostics;
-using System.Text;
 
 namespace BashSharp;
 
@@ -12,33 +11,77 @@ namespace BashSharp;
 /// </summary>
 public static class BashCommandService
 {
-    private const string LinuxBash = "/bin/bash";
-    private const string WindowsCmd = "CMD.exe";
-    private static Os _currentOs;
-    private static string BashExecutable { get; set; } = "";
-
-    static BashCommandService()
-    {
-        SetOsAndExecutable();
-    }
-    
-    private static void SetOsAndExecutable()
-    {
-        if (OperatingSystem.IsWindows()) _currentOs = Os.Windows;
-        else if (OperatingSystem.IsLinux()) _currentOs = Os.Linux;
-        else if (OperatingSystem.IsMacOS()) _currentOs = Os.Mac; 
-        
-        BashExecutable = _currentOs == Os.Windows ? WindowsCmd : LinuxBash;
-    }
-
+    /// <summary>
+    /// Executes the command and returns boolean indicating if exit code was 0. Enters the faulted state if standard error is read
+    /// </summary>
+    /// <param name="bashCommand"></param>
+    /// <returns></returns>
     public static Task<bool> ExecuteCommand(string bashCommand)
     {
-        throw new NotImplementedException();
+        var source = new TaskCompletionSource<bool>();
+        Process process = BuildProcess(bashCommand);
+        process.Exited += async (sender, args) =>
+        {
+            string error = await process.StandardError.ReadToEndAsync();
+            if (process.ExitCode != 0)
+            {
+                source.SetException(new Exception($"Error: {error} - Process exited with code {process.ExitCode}"));
+            }
+            else
+            {
+                source.SetResult(process.ExitCode == 0);
+            }
+            
+            process.Dispose();
+        };
+
+        try
+        {
+            process.Start();
+        }
+        catch (Exception ex)
+        {
+            source.SetResult(false);
+            source.SetException(ex);
+        }
+
+        return source.Task;
     }
 
-    public static Task<int> ExecuteCommandWithCodeAsync(string bashCommand)
+    /// <summary>
+    /// Executes the command and returns the exit code, or sets the state to faulted if standard error is read
+    /// </summary>
+    /// <param name="bashCommand"></param>
+    /// <returns></returns>
+    public static Task<int> ExecuteCommandWithCode(string bashCommand)
     {
-        throw new NotImplementedException();
+        var source = new TaskCompletionSource<int>();
+        Process process = BuildProcess(bashCommand);
+        process.Exited += async (sender, args) =>
+        {
+            string error = await process.StandardError.ReadToEndAsync();
+            if (!string.IsNullOrWhiteSpace(error))
+            {
+                source.SetException(new Exception($"Error: {error} - Process exited with code {process.ExitCode}"));
+            }
+            else
+            {
+                source.SetResult(process.ExitCode);
+            }
+            
+            process.Dispose();
+        };
+
+        try
+        {
+            process.Start();
+        }
+        catch (Exception ex)
+        {
+            source.SetException(ex);
+        }
+
+        return source.Task;
     }
 
     /// <summary>
@@ -47,25 +90,27 @@ public static class BashCommandService
     /// <param name="bashCommand"></param>
     /// <typeparam name="T"></typeparam>
     /// <returns>Task wrapped ICommandResult with parsed result, error and/or exception</returns>
-    public static Task<T> ExecuteCommandWithResultsAsync<T>(string bashCommand) where T : ICommandResult, new()
+    public static Task<T> ExecuteCommandWithResults<T>(string bashCommand) where T : ICommandResult, new()
     {
         var source = new TaskCompletionSource<T>();
-        T commandResult = new T();
+        var commandResult = new T();
         Process process = BuildProcess(bashCommand);
-        
         process.Exited += async (sender, args) =>
         {
             string result = await process.StandardOutput.ReadToEndAsync();
             string error = await process.StandardError.ReadToEndAsync();
             
-            if (process.ExitCode == 0)
+            if (!string.IsNullOrWhiteSpace(result))
             {
-                commandResult.Parse(result);
+                commandResult.ParseResult(result);
             }
-            else
+            
+            if (!string.IsNullOrWhiteSpace(error))
             {
                 commandResult.ParseError(error);
             }
+            
+            commandResult.SetExitCode(process.ExitCode);
             source.SetResult(commandResult);
             process.Dispose();
         };
@@ -76,17 +121,20 @@ public static class BashCommandService
         }
         catch (Exception ex)
         {
-            commandResult.ParseException(ex);
             source.SetException(ex);
         }
         
         return source.Task;
     }
 
+    /// <summary>
+    /// Builds the process to be executed
+    /// </summary>
+    /// <param name="bashCommand"></param>
+    /// <returns></returns>
     private static Process BuildProcess(string bashCommand)
     {
-        var escapedArgs = bashCommand.Replace("\"", "\\\"");
-        
+        string escapedArgs = bashCommand.Replace("\"", "\\\"");
         return new Process
         {
             StartInfo = new ProcessStartInfo

@@ -301,10 +301,8 @@ public static class BashCommandService
     /// <returns>Configured Process instance</returns>
     private static Process BuildProcess(string bashCommand)
     {
-        bashCommand.SanitizeInput();
-        
-        // Escape single quotes in the command by replacing ' with '\''
-        bashCommand = bashCommand.Replace("'", "'\\''");
+        // Sanitize and escape the command
+        bashCommand = bashCommand.SanitizeInput();
         
         // Configure process with basic settings
         var startInfo = new ProcessStartInfo
@@ -343,12 +341,12 @@ public static class BashCommandService
             }
             
             startInfo.FileName = "wsl";
-            startInfo.Arguments = $"bash -c '{bashCommand}'";  // Use single quotes to preserve command exactly
+            startInfo.Arguments = $"bash -c \"{bashCommand.Replace("\"", "\\\"")}\"";  // Use double quotes and escape them
         }
         else
         {
             startInfo.FileName = "bash";
-            startInfo.Arguments = $"-c '{bashCommand}'";  // Use single quotes to preserve command exactly
+            startInfo.Arguments = $"-c \"{bashCommand.Replace("\"", "\\\"")}\"";  // Use double quotes and escape them
         }
 
         return new Process { StartInfo = startInfo, EnableRaisingEvents = true };

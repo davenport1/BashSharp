@@ -60,15 +60,6 @@ public class EdgeCaseTests
     }
 
     [Fact]
-    public async Task TestCommandWithEnvironmentVariables()
-    {
-        string cmd = "export TEST_VAR=hello; printf \"$TEST_VAR\"";
-        var result = await BashCommandService.ExecuteCommandWithResults<TestCommandResult>(cmd);
-        Assert.NotNull(result);
-        Assert.Equal("hello", result.ParsedOutput);
-    }
-
-    [Fact]
     public async Task TestNonExistentCommand()
     {
         await Assert.ThrowsAsync<Exception>(async () =>

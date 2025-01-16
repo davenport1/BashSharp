@@ -26,9 +26,22 @@ jobs:
     
     - name: Install WSL (Windows)
       if: matrix.os == 'windows-latest'
+      shell: pwsh
       run: |
-        wsl --install -d Debian --no-launch
+        # Enable WSL feature
+        Enable-WindowsOptionalFeature -Online -FeatureName Microsoft-Windows-Subsystem-Linux -NoRestart
+        
+        # Download and install Debian
+        Invoke-WebRequest -Uri https://aka.ms/wsl-debian-gnulinux -OutFile debian.appx -UseBasicParsing
+        Add-AppxPackage .\debian.appx
+        
+        # Initialize WSL
         wsl --set-default-version 2
+        wsl --install -d Debian --no-launch
+        
+        # Wait for WSL to be ready
+        Start-Sleep -Seconds 10
+        wsl -- echo "WSL is ready"
     
     - name: Restore dependencies
       run: dotnet restore

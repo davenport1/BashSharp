@@ -175,12 +175,21 @@ public static class BashCommandService
         var commandResult = new T();
         var outputBuilder = new StringBuilder();
         var errorBuilder = new StringBuilder();
+        var outputComplete = new TaskCompletionSource<bool>();
+        var errorComplete = new TaskCompletionSource<bool>();
         
         process.OutputDataReceived += (sender, args) =>
         {
             if (args.Data != null)
             {
-                outputBuilder.AppendLine(args.Data);
+                lock (outputBuilder)
+                {
+                    outputBuilder.AppendLine(args.Data);
+                }
+            }
+            else
+            {
+                outputComplete.SetResult(true);
             }
         };
 
@@ -188,11 +197,18 @@ public static class BashCommandService
         {
             if (args.Data != null)
             {
-                errorBuilder.AppendLine(args.Data);
+                lock (errorBuilder)
+                {
+                    errorBuilder.AppendLine(args.Data);
+                }
+            }
+            else
+            {
+                errorComplete.SetResult(true);
             }
         };
 
-        process.Exited += (sender, args) =>
+        process.Exited += async (sender, args) =>
         {
             if (cts.Token.IsCancellationRequested)
             {
@@ -202,14 +218,30 @@ public static class BashCommandService
 
             try
             {
-                if (outputBuilder.Length > 0)
+                // Wait for all output to be processed
+                await Task.WhenAll(outputComplete.Task, errorComplete.Task);
+
+                string output;
+                string error;
+
+                lock (outputBuilder)
                 {
-                    commandResult.ParseResult(outputBuilder.ToString());
+                    output = outputBuilder.ToString();
+                }
+
+                lock (errorBuilder)
+                {
+                    error = errorBuilder.ToString();
+                }
+
+                if (!string.IsNullOrEmpty(output))
+                {
+                    commandResult.ParseResult(output);
                 }
                 
-                if (errorBuilder.Length > 0)
+                if (!string.IsNullOrEmpty(error))
                 {
-                    commandResult.ParseError(errorBuilder.ToString());
+                    commandResult.ParseError(error);
                 }
                 
                 commandResult.SetExitCode(process.ExitCode);
@@ -243,12 +275,8 @@ public static class BashCommandService
                 }
             });
 
-            // Wait for process to complete or timeout
-            if (!process.HasExited)
-            {
-                process.WaitForExit();
-            }
-
+            // Wait for process to complete
+            await process.WaitForExitAsync(cts.Token);
             return await tcs.Task;
         }
         catch (Exception ex) when (ex is not OperationCanceledException)

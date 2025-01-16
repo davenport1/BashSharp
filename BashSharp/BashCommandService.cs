@@ -1,6 +1,7 @@
 ﻿using BashSharp.Interfaces;
 using BashSharp.Enumerations;
 using System.Diagnostics;
+using System.Text;
 
 namespace BashSharp;
 
@@ -11,141 +12,318 @@ namespace BashSharp;
 /// </summary>
 public static class BashCommandService
 {
+    private const int DefaultTimeoutMs = 30000; // 30 seconds default timeout
+    private const int BufferSize = 4096; // 4KB buffer size
+
     /// <summary>
-    /// Executes the command and returns boolean indicating if exit code was 0. Enters the faulted state if standard error is read
+    /// Executes the command and returns boolean indicating if exit code was 0
     /// </summary>
-    /// <param name="bashCommand"></param>
-    /// <returns></returns>
-    public static Task<bool> ExecuteCommand(string bashCommand)
+    /// <param name="bashCommand">The command to execute</param>
+    /// <param name="timeoutMs">Timeout in milliseconds, defaults to 30 seconds</param>
+    /// <param name="cancellationToken">Optional cancellation token</param>
+    /// <returns>True if command succeeded, false otherwise</returns>
+    public static async Task<bool> ExecuteCommand(string bashCommand, int timeoutMs = DefaultTimeoutMs, CancellationToken cancellationToken = default)
     {
-        var source = new TaskCompletionSource<bool>();
-        Process process = BuildProcess(bashCommand);
-        process.Exited += async (sender, args) =>
+        using var cts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        cts.CancelAfter(timeoutMs);
+        
+        using var process = BuildProcess(bashCommand);
+        var tcs = new TaskCompletionSource<bool>();
+        var errorBuilder = new StringBuilder();
+        
+        process.ErrorDataReceived += (sender, args) =>
         {
-            string error = await process.StandardError.ReadToEndAsync();
+            if (args.Data != null)
+            {
+                errorBuilder.AppendLine(args.Data);
+            }
+        };
+
+        process.Exited += (sender, args) =>
+        {
+            if (cts.Token.IsCancellationRequested)
+            {
+                tcs.TrySetCanceled();
+                return;
+            }
+
             if (process.ExitCode != 0)
             {
-                source.SetException(new Exception($"Error: {error} - Process exited with code {process.ExitCode}"));
+                tcs.TrySetException(new Exception($"Error: {errorBuilder} - Process exited with code {process.ExitCode}"));
             }
             else
             {
-                source.SetResult(process.ExitCode == 0);
+                tcs.TrySetResult(true);
             }
-            
-            process.Dispose();
         };
 
-        try
+        try 
         {
             process.Start();
-        }
-        catch (Exception ex)
-        {
-            source.SetResult(false);
-            source.SetException(ex);
-        }
+            process.BeginErrorReadLine();
+            
+            using var registration = cts.Token.Register(() => 
+            {
+                try 
+                { 
+                    if (!process.HasExited)
+                    {
+                        process.Kill(true);
+                        tcs.TrySetCanceled(cts.Token);
+                    }
+                }
+                catch 
+                {
+                    tcs.TrySetCanceled(cts.Token);
+                }
+            });
 
-        return source.Task;
+            return await tcs.Task;
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            throw new Exception($"Failed to execute command: {bashCommand}", ex);
+        }
     }
 
     /// <summary>
-    /// Executes the command and returns the exit code, or sets the state to faulted if standard error is read
+    /// Executes the command and returns the exit code
     /// </summary>
-    /// <param name="bashCommand"></param>
-    /// <returns></returns>
-    public static Task<int> ExecuteCommandWithCode(string bashCommand)
+    /// <param name="bashCommand">The command to execute</param>
+    /// <param name="timeoutMs">Timeout in milliseconds, defaults to 30 seconds</param>
+    /// <param name="cancellationToken">Optional cancellation token</param>
+    /// <returns>The command exit code</returns>
+    public static async Task<int> ExecuteCommandWithCode(string bashCommand, int timeoutMs = DefaultTimeoutMs, CancellationToken cancellationToken = default)
     {
-        var source = new TaskCompletionSource<int>();
-        Process process = BuildProcess(bashCommand);
-        process.Exited += async (sender, args) =>
+        using var cts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        cts.CancelAfter(timeoutMs);
+        
+        using var process = BuildProcess(bashCommand);
+        var tcs = new TaskCompletionSource<int>();
+        var errorBuilder = new StringBuilder();
+        
+        process.ErrorDataReceived += (sender, args) =>
         {
-            string error = await process.StandardError.ReadToEndAsync();
-            if (!string.IsNullOrWhiteSpace(error))
+            if (args.Data != null)
             {
-                source.SetException(new Exception($"Error: {error} - Process exited with code {process.ExitCode}"));
+                errorBuilder.AppendLine(args.Data);
+            }
+        };
+
+        process.Exited += (sender, args) =>
+        {
+            if (cts.Token.IsCancellationRequested)
+            {
+                tcs.TrySetCanceled();
+                return;
+            }
+
+            if (errorBuilder.Length > 0)
+            {
+                tcs.TrySetException(new Exception($"Error: {errorBuilder} - Process exited with code {process.ExitCode}"));
             }
             else
             {
-                source.SetResult(process.ExitCode);
+                tcs.TrySetResult(process.ExitCode);
             }
-            
-            process.Dispose();
         };
 
         try
         {
             process.Start();
-        }
-        catch (Exception ex)
-        {
-            source.SetException(ex);
-        }
+            process.BeginErrorReadLine();
+            
+            using var registration = cts.Token.Register(() => 
+            {
+                try 
+                { 
+                    if (!process.HasExited)
+                    {
+                        process.Kill(true);
+                        tcs.TrySetCanceled(cts.Token);
+                    }
+                }
+                catch 
+                {
+                    tcs.TrySetCanceled(cts.Token);
+                }
+            });
 
-        return source.Task;
+            return await tcs.Task;
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            throw new Exception($"Failed to execute command: {bashCommand}", ex);
+        }
     }
 
     /// <summary>
     /// Executes the command passed asynchronously and uses the ICommandResult to parse the responses
     /// </summary>
-    /// <param name="bashCommand"></param>
-    /// <typeparam name="T"></typeparam>
+    /// <param name="bashCommand">The command to execute</param>
+    /// <param name="timeoutMs">Timeout in milliseconds, defaults to 30 seconds</param>
+    /// <param name="cancellationToken">Optional cancellation token</param>
+    /// <typeparam name="T">Type implementing ICommandResult</typeparam>
     /// <returns>Task wrapped ICommandResult with parsed result, error and/or exception</returns>
-    public static Task<T> ExecuteCommandWithResults<T>(string bashCommand) where T : ICommandResult, new()
+    public static async Task<T> ExecuteCommandWithResults<T>(string bashCommand, int timeoutMs = DefaultTimeoutMs, CancellationToken cancellationToken = default) where T : ICommandResult, new()
     {
-        var source = new TaskCompletionSource<T>();
+        using var cts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        cts.CancelAfter(timeoutMs);
+        
+        using var process = BuildProcess(bashCommand);
+        var tcs = new TaskCompletionSource<T>();
         var commandResult = new T();
-        Process process = BuildProcess(bashCommand);
-        process.Exited += async (sender, args) =>
+        var outputBuilder = new StringBuilder();
+        var errorBuilder = new StringBuilder();
+        
+        process.OutputDataReceived += (sender, args) =>
         {
-            string result = await process.StandardOutput.ReadToEndAsync();
-            string error = await process.StandardError.ReadToEndAsync();
-            
-            if (!string.IsNullOrWhiteSpace(result))
+            if (args.Data != null)
             {
-                commandResult.ParseResult(result);
+                outputBuilder.AppendLine(args.Data);
             }
-            
-            if (!string.IsNullOrWhiteSpace(error))
+        };
+
+        process.ErrorDataReceived += (sender, args) =>
+        {
+            if (args.Data != null)
             {
-                commandResult.ParseError(error);
+                errorBuilder.AppendLine(args.Data);
             }
-            
-            commandResult.SetExitCode(process.ExitCode);
-            source.SetResult(commandResult);
-            process.Dispose();
+        };
+
+        process.Exited += (sender, args) =>
+        {
+            if (cts.Token.IsCancellationRequested)
+            {
+                tcs.TrySetCanceled();
+                return;
+            }
+
+            try
+            {
+                if (outputBuilder.Length > 0)
+                {
+                    commandResult.ParseResult(outputBuilder.ToString());
+                }
+                
+                if (errorBuilder.Length > 0)
+                {
+                    commandResult.ParseError(errorBuilder.ToString());
+                }
+                
+                commandResult.SetExitCode(process.ExitCode);
+                tcs.TrySetResult(commandResult);
+            }
+            catch (Exception ex)
+            {
+                tcs.TrySetException(ex);
+            }
         };
 
         try
         {
             process.Start();
+            process.BeginOutputReadLine();
+            process.BeginErrorReadLine();
+            
+            using var registration = cts.Token.Register(() => 
+            {
+                try 
+                { 
+                    if (!process.HasExited)
+                    {
+                        process.Kill(true);
+                        tcs.TrySetCanceled(cts.Token);
+                    }
+                }
+                catch 
+                {
+                    tcs.TrySetCanceled(cts.Token);
+                }
+            });
+
+            // Wait for process to complete or timeout
+            if (!process.HasExited)
+            {
+                process.WaitForExit();
+            }
+
+            return await tcs.Task;
         }
-        catch (Exception ex)
+        catch (Exception ex) when (ex is not OperationCanceledException)
         {
-            source.SetException(ex);
+            throw new Exception($"Failed to execute command: {bashCommand}", ex);
         }
-        
-        return source.Task;
     }
 
     /// <summary>
     /// Builds the process to be executed
     /// </summary>
-    /// <param name="bashCommand"></param>
-    /// <returns></returns>
+    /// <param name="bashCommand">The command to execute</param>
+    /// <returns>Configured Process instance</returns>
     private static Process BuildProcess(string bashCommand)
     {
         string escapedArgs = bashCommand.Replace("\"", "\\\"");
+        
+        // Detect OS
+        Os currentOs = Environment.OSVersion.Platform switch
+        {
+            PlatformID.Win32NT => Os.Windows,
+            PlatformID.Unix => Os.Linux,
+            PlatformID.MacOSX => Os.Mac,
+            _ => throw new PlatformNotSupportedException("Current OS platform is not supported")
+        };
+
+        // Configure process based on OS
+        var startInfo = new ProcessStartInfo
+        {
+            RedirectStandardOutput = true,
+            RedirectStandardError = true,
+            UseShellExecute = false,
+            CreateNoWindow = true
+        };
+
+        switch (currentOs)
+        {
+            case Os.Windows:
+                try
+                {
+                    // Check if WSL is available
+                    using var wslCheck = Process.Start(new ProcessStartInfo
+                    {
+                        FileName = "wsl",
+                        Arguments = "--status",
+                        RedirectStandardError = true,
+                        UseShellExecute = false,
+                        CreateNoWindow = true
+                    });
+                    wslCheck?.WaitForExit();
+                    
+                    if (wslCheck?.ExitCode != 0)
+                    {
+                        throw new PlatformNotSupportedException("WSL is not available. Please install WSL to use BashSharp on Windows.");
+                    }
+                }
+                catch (Exception ex) when (ex is not PlatformNotSupportedException)
+                {
+                    throw new PlatformNotSupportedException("WSL is not available. Please install WSL to use BashSharp on Windows.");
+                }
+                
+                startInfo.FileName = "wsl";
+                startInfo.Arguments = $"bash -c \"{escapedArgs}\"";
+                break;
+                
+            case Os.Linux:
+            case Os.Mac:
+                startInfo.FileName = "bash";
+                startInfo.Arguments = $"-c \"{escapedArgs}\"";
+                break;
+        }
+
         return new Process
         {
-            StartInfo = new ProcessStartInfo
-            {
-                FileName = "bash",
-                Arguments = $"-c \"{escapedArgs}\"",
-                RedirectStandardOutput = true,
-                RedirectStandardError = true,
-                UseShellExecute = false,
-                CreateNoWindow = true
-            },
+            StartInfo = startInfo,
             EnableRaisingEvents = true
         };
     }

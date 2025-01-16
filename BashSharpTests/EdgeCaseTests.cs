@@ -71,7 +71,7 @@ public class EdgeCaseTests
     [Fact]
     public async Task TestCommandWithEnvironmentVariables()
     {
-        string cmd = "TEST_VAR=hello && echo -n $TEST_VAR";
+        string cmd = "bash -c 'TEST_VAR=hello && echo -n $TEST_VAR'";
         var result = await BashCommandService.ExecuteCommandWithResults<TestCommandResult>(cmd);
         Assert.NotNull(result);
         Assert.Equal("hello", result.ParsedOutput);

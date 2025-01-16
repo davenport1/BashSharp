@@ -301,16 +301,7 @@ public static class BashCommandService
     /// <returns>Configured Process instance</returns>
     private static Process BuildProcess(string bashCommand)
     {
-        // Detect OS
-        Os currentOs = Environment.OSVersion.Platform switch
-        {
-            PlatformID.Win32NT => Os.Windows,
-            PlatformID.Unix => Os.Linux,
-            PlatformID.MacOSX => Os.Mac,
-            _ => throw new PlatformNotSupportedException("Current OS platform is not supported")
-        };
-
-        // Configure process based on OS
+        // Configure process with basic settings
         var startInfo = new ProcessStartInfo
         {
             RedirectStandardOutput = true,
@@ -321,52 +312,45 @@ public static class BashCommandService
             StandardErrorEncoding = System.Text.Encoding.UTF8
         };
 
-        switch (currentOs)
+        // On Windows, use WSL
+        if (Environment.OSVersion.Platform == PlatformID.Win32NT)
         {
-            case Os.Windows:
-                try
+            try
+            {
+                using var wslCheck = Process.Start(new ProcessStartInfo
                 {
-                    // Check if WSL is available
-                    using var wslCheck = Process.Start(new ProcessStartInfo
-                    {
-                        FileName = "wsl",
-                        Arguments = "--status",
-                        RedirectStandardError = true,
-                        UseShellExecute = false,
-                        CreateNoWindow = true
-                    });
-                    wslCheck?.WaitForExit();
-                    
-                    if (wslCheck?.ExitCode != 0)
-                    {
-                        throw new PlatformNotSupportedException("WSL is not available. Please install WSL to use BashSharp on Windows.");
-                    }
-                }
-                catch (Exception ex) when (ex is not PlatformNotSupportedException)
+                    FileName = "wsl",
+                    Arguments = "--status",
+                    RedirectStandardError = true,
+                    UseShellExecute = false,
+                    CreateNoWindow = true
+                });
+                wslCheck?.WaitForExit();
+                
+                if (wslCheck?.ExitCode != 0)
                 {
-                    throw new PlatformNotSupportedException("WSL is not available. Please install WSL to use BashSharp on Windows.");
+                    throw new PlatformNotSupportedException("WSL is not available");
                 }
-                
-                startInfo.FileName = "wsl";
-                startInfo.Arguments = $"bash -c '{bashCommand}'";  // Simple single quote wrapping
-                break;
-                
-            case Os.Linux:
-            case Os.Mac:
-                startInfo.FileName = "bash";
-                startInfo.Arguments = $"-c '{bashCommand}'";  // Simple single quote wrapping
-                break;
+            }
+            catch (Exception ex) when (ex is not PlatformNotSupportedException)
+            {
+                throw new PlatformNotSupportedException("WSL is not available");
+            }
+            
+            startInfo.FileName = "wsl";
+            startInfo.Arguments = bashCommand;  // Let WSL handle the command directly
+        }
+        else
+        {
+            startInfo.FileName = "bash";
+            startInfo.Arguments = $"-c {bashCommand}";  // Basic bash execution
         }
 
-        return new Process
-        {
-            StartInfo = startInfo,
-            EnableRaisingEvents = true
-        };
+        return new Process { StartInfo = startInfo, EnableRaisingEvents = true };
     }
 
     private static string SanitizeOutput(string? output)
     {
-        return output?.TrimEnd() ?? string.Empty;  // Just trim trailing whitespace
+        return output ?? string.Empty;  // Just handle null case
     }
 }

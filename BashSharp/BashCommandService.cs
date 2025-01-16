@@ -303,6 +303,9 @@ public static class BashCommandService
     {
         bashCommand.SanitizeInput();
         
+        // Escape single quotes in the command by replacing ' with '\''
+        bashCommand = bashCommand.Replace("'", "'\\''");
+        
         // Configure process with basic settings
         var startInfo = new ProcessStartInfo
         {

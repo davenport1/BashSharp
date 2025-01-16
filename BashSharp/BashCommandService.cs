@@ -24,6 +24,9 @@ public static class BashCommandService
     /// <returns>True if command succeeded, false otherwise</returns>
     public static async Task<bool> ExecuteCommand(string bashCommand, int timeoutMs = DefaultTimeoutMs, CancellationToken cancellationToken = default)
     {
+        if (string.IsNullOrWhiteSpace(bashCommand))
+            throw new ArgumentException("Command cannot be empty", nameof(bashCommand));
+
         using var cts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
         cts.CancelAfter(timeoutMs);
         
@@ -95,6 +98,9 @@ public static class BashCommandService
     /// <returns>The command exit code</returns>
     public static async Task<int> ExecuteCommandWithCode(string bashCommand, int timeoutMs = DefaultTimeoutMs, CancellationToken cancellationToken = default)
     {
+        if (string.IsNullOrWhiteSpace(bashCommand))
+            throw new ArgumentException("Command cannot be empty", nameof(bashCommand));
+
         using var cts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
         cts.CancelAfter(timeoutMs);
         
@@ -167,6 +173,9 @@ public static class BashCommandService
     /// <returns>Task wrapped ICommandResult with parsed result, error and/or exception</returns>
     public static async Task<T> ExecuteCommandWithResults<T>(string bashCommand, int timeoutMs = DefaultTimeoutMs, CancellationToken cancellationToken = default) where T : ICommandResult, new()
     {
+        if (string.IsNullOrWhiteSpace(bashCommand))
+            throw new ArgumentException("Command cannot be empty", nameof(bashCommand));
+
         using var cts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
         cts.CancelAfter(timeoutMs);
         
@@ -184,7 +193,7 @@ public static class BashCommandService
             {
                 lock (outputBuilder)
                 {
-                    outputBuilder.AppendLine(args.Data);
+                    outputBuilder.AppendLine(SanitizeOutput(args.Data));
                 }
             }
             else
@@ -199,7 +208,7 @@ public static class BashCommandService
             {
                 lock (errorBuilder)
                 {
-                    errorBuilder.AppendLine(args.Data);
+                    errorBuilder.AppendLine(SanitizeOutput(args.Data));
                 }
             }
             else
@@ -292,8 +301,6 @@ public static class BashCommandService
     /// <returns>Configured Process instance</returns>
     private static Process BuildProcess(string bashCommand)
     {
-        string escapedArgs = bashCommand.Replace("\"", "\\\"");
-        
         // Detect OS
         Os currentOs = Environment.OSVersion.Platform switch
         {
@@ -309,7 +316,9 @@ public static class BashCommandService
             RedirectStandardOutput = true,
             RedirectStandardError = true,
             UseShellExecute = false,
-            CreateNoWindow = true
+            CreateNoWindow = true,
+            StandardOutputEncoding = System.Text.Encoding.UTF8,
+            StandardErrorEncoding = System.Text.Encoding.UTF8
         };
 
         switch (currentOs)
@@ -339,13 +348,13 @@ public static class BashCommandService
                 }
                 
                 startInfo.FileName = "wsl";
-                startInfo.Arguments = $"bash -c \"{escapedArgs}\"";
+                startInfo.Arguments = $"bash -c '{bashCommand}'";  // Simple single quote wrapping
                 break;
                 
             case Os.Linux:
             case Os.Mac:
                 startInfo.FileName = "bash";
-                startInfo.Arguments = $"-c \"{escapedArgs}\"";
+                startInfo.Arguments = $"-c '{bashCommand}'";  // Simple single quote wrapping
                 break;
         }
 
@@ -354,5 +363,10 @@ public static class BashCommandService
             StartInfo = startInfo,
             EnableRaisingEvents = true
         };
+    }
+
+    private static string SanitizeOutput(string? output)
+    {
+        return output?.TrimEnd() ?? string.Empty;  // Just trim trailing whitespace
     }
 }

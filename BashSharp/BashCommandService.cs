@@ -301,6 +301,8 @@ public static class BashCommandService
     /// <returns>Configured Process instance</returns>
     private static Process BuildProcess(string bashCommand)
     {
+        bashCommand.SanitizeInput();
+        
         // Configure process with basic settings
         var startInfo = new ProcessStartInfo
         {
@@ -338,12 +340,12 @@ public static class BashCommandService
             }
             
             startInfo.FileName = "wsl";
-            startInfo.Arguments = bashCommand;  // Let WSL handle the command directly
+            startInfo.Arguments = $"bash -c '{bashCommand}'";  // Use single quotes to preserve command exactly
         }
         else
         {
             startInfo.FileName = "bash";
-            startInfo.Arguments = $"-c {bashCommand}";  // Basic bash execution
+            startInfo.Arguments = $"-c '{bashCommand}'";  // Use single quotes to preserve command exactly
         }
 
         return new Process { StartInfo = startInfo, EnableRaisingEvents = true };
@@ -351,6 +353,19 @@ public static class BashCommandService
 
     private static string SanitizeOutput(string? output)
     {
-        return output ?? string.Empty;  // Just handle null case
+        if (string.IsNullOrEmpty(output))
+            return string.Empty;
+
+        // Handle null bytes and normalize line endings
+        return output.Replace("\0", "")
+            .Replace("\r\n", "\n");
+    }
+
+    private static string SanitizeInput(this string? input)
+    {
+        if (string.IsNullOrEmpty(input))
+            return string.Empty;
+
+        return input.Replace("\0", "");
     }
 }

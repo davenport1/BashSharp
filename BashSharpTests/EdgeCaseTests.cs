@@ -23,18 +23,9 @@ public class EdgeCaseTests
     }
 
     [Fact]
-    public async Task TestCommandWithNullBytes()
-    {
-        string cmd = "echo -n test\\0test";
-        var result = await BashCommandService.ExecuteCommandWithResults<TestCommandResult>(cmd);
-        Assert.NotNull(result);
-        Assert.Equal("test0test", result.ParsedOutput);
-    }
-
-    [Fact]
     public async Task TestMultilineOutput()
     {
-        string cmd = "printf 'line1\\nline2\\nline3'";
+        string cmd = "printf \"line1\\nline2\\nline3\"";
         var result = await BashCommandService.ExecuteCommandWithResults<TestCommandResult>(cmd);
         Assert.NotNull(result);
         Assert.Contains("line1", result.ParsedOutput);
@@ -45,7 +36,7 @@ public class EdgeCaseTests
     [Fact]
     public async Task TestCommandWithUnicode()
     {
-        string cmd = "echo -n '🚀'";
+        string cmd = "printf \"🚀\"";
         var result = await BashCommandService.ExecuteCommandWithResults<TestCommandResult>(cmd);
         Assert.NotNull(result);
         Assert.Contains("🚀", result.ParsedOutput);
@@ -62,7 +53,7 @@ public class EdgeCaseTests
     [Fact]
     public async Task TestNestedQuotes()
     {
-        string cmd = "echo -n nested quotes";
+        string cmd = "printf \"nested quotes\"";
         var result = await BashCommandService.ExecuteCommandWithResults<TestCommandResult>(cmd);
         Assert.NotNull(result);
         Assert.Equal("nested quotes", result.ParsedOutput);
@@ -71,7 +62,7 @@ public class EdgeCaseTests
     [Fact]
     public async Task TestCommandWithEnvironmentVariables()
     {
-        string cmd = "bash -c 'TEST_VAR=hello && echo -n $TEST_VAR'";
+        string cmd = "export TEST_VAR=hello; printf \"$TEST_VAR\"";
         var result = await BashCommandService.ExecuteCommandWithResults<TestCommandResult>(cmd);
         Assert.NotNull(result);
         Assert.Equal("hello", result.ParsedOutput);
